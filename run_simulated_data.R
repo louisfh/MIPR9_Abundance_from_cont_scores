@@ -1,0 +1,148 @@
+# Test_on_simulation
+# Louis Freeland-Haynes
+# date: 2022/11/21
+# This script contains the model from
+#   Rhinehart, Tessa A.; Turek, Daniel; Kitzes, Justin. 2022. 
+#   A continuous-score occupancy modeling framework for incorporating
+#   uncertain machine learning output in autonomous biodiversity surveys.
+#   Methods in Ecology and Evolution.
+#
+#
+# Note that the indices for mu and sigma are different in this file (mu[1], mu[2])
+# compared to the manuscript (mu_0, mu_1) because of R's indexing.
+
+library(nimble)
+library(tidyverse) # I think tidyverse required
+library(rlist)
+library(bayesplot)
+
+### SET CONSTANTS
+
+
+####### CONTINUOUS-SCORE MODEL, NO COVARIATES ####### 
+
+## NIMBLE custom distribution for score:
+dContinuousScore <- nimbleFunction(
+  run = function(x = double(), theta = double(), mu = double(1), sigma = double(1), z = double(), annotation = double(), log = integer()) {
+    if(is.na(annotation)) {
+      lp <- (1-z) * dnorm(x, mu[1], sigma[1], log=TRUE) +
+        z * log( (1-theta) * dnorm(x, mu[1], sigma[1]) + theta * dnorm(x, mu[2], sigma[2]) )
+    } else if(annotation == 0) {
+      lp <- (1-z) * dnorm(x, mu[1], sigma[1], log=TRUE) +
+        z * (log(1-theta) + dnorm(x, mu[1], sigma[1], log=TRUE))
+    } else if(annotation == 1) {
+      if(z != 1) stop('error with z value')
+      lp <- log(theta) + dnorm(x, mu[2], sigma[2], log=TRUE)
+    } else stop('unknown value of annotation')
+    returnType(double())
+    return(lp)
+  }
+)
+
+rContinuousScore <- nimbleFunction(
+  run = function(n = double(), theta = double(), mu = double(1), sigma = double(1), z = double(), annotation = double()) {
+    print('should never call rContinuousScore function')
+    returnType(double())
+    return(1)
+  }
+)
+
+registerDistributions(list(
+  dContinuousScore = list(
+    BUGSdist = 'dContinuousScore(theta, mu, sigma, z, annotation)',
+    types = c('mu = double(1)', 'sigma = double(1)')
+  )
+))
+
+## NIMBLE model code and model object:
+code <- nimbleCode({
+  lambda ~ dunif(0,10)    # overall mean in abundance across all sites (site Ns are drawn from poisson(lambda)
+  p_call ~ dunif(0,1)     # probability bird calls in any one time window
+  
+  mu[1] ~ dunif(-20,5)
+  mu[2] ~ dunif(0,30)
+
+  for(i in 1:2) {
+    sigma[i] ~ dunif(0.1, 50)
+  }
+  
+  for(i in 1:NSITES) {
+    abundance[i] ~ dpois(lambda) ###JAN20-2023
+    z[i] <- step(abundance[i]-1) # step(x) = 1 at x>=0, so need to subtract 1 from it
+    
+    p_at_least_1_singer[i] <- (1-(1-p_call)**abundance[i]) # probability any 1 period contains no singers
+    num_positives[i] ~ dbinom(prob= p_at_least_1_singer[i], NFILES) # num positives
+    theta[i] <- num_positives[i]/NFILES
+    
+    for(j in 1:NFILES) {
+      score[i, j] ~ dContinuousScore(theta = theta[i], mu = mu[1:2], sigma = sigma[1:2], z = z[i], annotation = annotation[i, j])
+    }
+  }
+  constraint ~ dconstraint(mu[2] >= mu[1])  # Assumption to make the two classifier distributions identifiable
+})
+
+############## Fitting the data ##########
+
+# Set working directory
+# If you are using RStudio and this gives you an error, Source the code instead of Running it
+this.dir <- dirname(parent.frame(2)$ofile)
+setwd(this.dir)
+
+# Set up data and results save directories
+data_save_path <- "/Users/LOF19/Documents/kitzes_projects/Rotation_2_continuous_score/simulation_sunday/data/"
+results_save_path <- "/Users/LOF19/Documents/kitzes_projects/Rotation_2_continuous_score/simulation_sunday/mcmc_results/"
+
+nimbleOptions(clearNimbleFunctionsAfterCompiling = TRUE)
+
+# Read in data
+for (real_lambda in seq(0,4,0.2)){
+  data_file <- sprintf("%ssimulated_scores%g.Rdata", data_save_path, real_lambda)
+  load(data_file)
+
+  # Set up the constants, data, and initial value vectors needed by NIMBLE model
+  constants <- list(
+    NSITES = NSITES,
+    NFILES = NFILES
+  )
+  data <- list(
+    z = rep(c(NA), NSITES),
+    annotation = annotation_all,
+    score = scores,
+    constraint = 1 # Enforces constraint
+  )
+  
+  inits <- list(
+    mu = c(NA,NA),
+    sigma = c(NA,NA),
+    z = rep(c(NA), NSITES),
+    lambda = NA,
+    p_call = NA
+  )
+  
+  # Create the NIMBLE model
+  Rmodel <- nimbleModel(code = code, constants = constants, data = data, inits = inits)
+  Rmodel$calculate()
+  
+  # Build, compile, and run MCMC
+  conf <- configureMCMC(Rmodel, monitors=c("mu[1]", "mu[2]", "sigma[1]", "sigma[2]", "theta", "lambda", "abundance", "z"))
+  
+  # Compile NIMBLE model into C for speed
+  Rmcmc <- buildMCMC(conf, monitors=c("mu[1]", "mu[2]", "sigma[1]", "sigma[2]", "theta", "lambda", "abundance", "z"))
+  Cmodel <- compileNimble(Rmodel, showCompilerOutput = TRUE)
+  Cmcmc <- compileNimble(Rmcmc, project = Rmodel, showCompilerOutput = TRUE)
+  
+  
+  set.seed(0) #Makes MCMC results replicable
+  start_t <- Sys.time()
+  continuous_results <- runMCMC(Cmcmc, niter=3000, nburnin=500, nchains=2, samples = TRUE, summary = TRUE)
+  end_t <- Sys.time()
+  print(end_t - start_t)
+  
+  # Generate filename for results file
+  results_filename <- sprintf("%sresults_%g.Rdata",results_save_path, real_lambda)
+
+  save(continuous_results, file=results_filename)
+}
+
+
+
