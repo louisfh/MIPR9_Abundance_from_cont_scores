@@ -1,24 +1,67 @@
-# Test_on_simulation
-# Louis Freeland-Haynes
-# date: 2022/11/21
-# This script contains the model from
-#   Rhinehart, Tessa A.; Turek, Daniel; Kitzes, Justin. 2022.
-#   A continuous-score occupancy modeling framework for incorporating
-#   uncertain machine learning output in autonomous biodiversity surveys.
-#   Methods in Ecology and Evolution.
-#
-#
-# Note that the indices for mu and sigma are different in this file (mu[1], mu[2])
-# compared to the manuscript (mu_0, mu_1) because of R's indexing.
+---
+output: reprex::reprex_document
+knit: reprex::reprex_render
+---
 
+Testing out the fitting using nimble
+Louis Freeland-Haynes
+Date: 2024/02/27
+This script contains the model from
+   Rhinehart, Tessa A.; Turek, Daniel; Kitzes, Justin. 2022.
+   A continuous-score occupancy modeling framework for incorporating
+   uncertain machine learning output in autonomous biodiversity surveys.
+   Methods in Ecology and Evolution.
+
+ Note that the indices for mu and sigma are different in this file (mu[1], mu[2])
+ compared to the manuscript (mu_0, mu_1) because of R's indexing.
+
+
+```{r}
+# install all the libraries
+install.packages("nimble")
+install.packages("tidyverse")
+install.packages("rlist")
+install.packages("bayesplot")
+install.packages("readr")
+```
+
+```{r}
 library(nimble)
 library(tidyverse) # I think tidyverse required
 library(rlist)
 library(bayesplot)
+library(readr)
+library(ggplot2)
+library(dplyr)    
 
-### SET CONSTANTS
+```
+
+```{r}
+
+# read in a csv file from simulated_data directory 
+# set the working directory to the location of the data
+setwd("/media/auk/projects/lfh/MIPR_9_Extension_tessa/")
+
+# read the csv, the first row is the header
+data <- read_csv("./simulated_data/simulated_data_lambda_0.05_p_call_0.01.csv")
+# this is a tibble where each row is a site and each column is a file's score
+# turn these into rlists
+scores <- as_rlist(data)
+```
+
+```{r}
+# find the max score
+max_score <- max(scores)
+# print this
+print(max_score)
+```
 
 
+```{r}
+library(nimble)
+library(tidyverse) # I think tidyverse required
+library(rlist)
+library(bayesplot)
 ####### CONTINUOUS-SCORE MODEL, NO COVARIATES #######
 
 ## NIMBLE custom distribution for score:
@@ -56,6 +99,7 @@ registerDistributions(list(
   )
 ))
 
+
 ## NIMBLE model code and model object:
 code <- nimbleCode({
   lambda ~ dunif(0, 10) # overall mean in abundance across all sites (site Ns are drawn from poisson(lambda)
@@ -82,6 +126,9 @@ code <- nimbleCode({
   }
   constraint ~ dconstraint(mu[2] >= mu[1]) # Assumption to make the two classifier distributions identifiable
 })
+
+```
+```{r}
 
 ############## Fitting the data ##########
 
@@ -145,3 +192,5 @@ for (real_lambda in seq(0, 4, 0.2)) {
 
   save(continuous_results, file = results_filename)
 }
+```
+```

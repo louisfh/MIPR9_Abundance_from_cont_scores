@@ -1,0 +1,68 @@
+---
+output: reprex::reprex_document
+knit: reprex::reprex_render
+---
+
+Testing out the fitting using nimble
+Louis Freeland-Haynes
+Date: 2024/02/27
+This script contains the model from
+   Rhinehart, Tessa A.; Turek, Daniel; Kitzes, Justin. 2022.
+   A continuous-score occupancy modeling framework for incorporating
+   uncertain machine learning output in autonomous biodiversity surveys.
+   Methods in Ecology and Evolution.
+
+ Note that the indices for mu and sigma are different in this file (mu[1], mu[2])
+ compared to the manuscript (mu_0, mu_1) because of R's indexing.
+
+```{r}
+save_dir <- "/media/auk/projects/lfh/MIPR_9_Extension_tessa/simulated_data_R/"
+
+NSITES <- 100
+NFILES <- 720
+positive_mu <- 5
+positive_sd <- 2
+negative_mu <- -1
+negative_sd <- 1
+
+for (lambda in seq(0.1, 3, 0.05)) {
+    # loop over p_call as well
+    for (p_call in seq(0.01, 0.3, 0.05)) {
+        ###### set up vectors for storing the results #####
+        true_z <- vector() # occupancy
+        abundance <- vector()
+        p_call <- vector()
+        p_at_least_1_singer <- vector() # is (1 - no birds sing at all)
+        p_no_singers <- vector() # probability no bird sings in each period
+        num_positives <- vector() # number of files that are from positives
+        num_negatives <- vector() # number of files that are from positives
+        scores <- matrix(NA, nrow = NSITES, ncol = NFILES)
+        theta <- vector()
+        z_data <- rep(NA, NSITES) # the annotations
+        annotation_all <- matrix(NA, nrow = NSITES, ncol = NFILES)
+
+        ###### loop over each site to make the data ####
+        for (i in 1:NSITES) {
+            # true_z[i] <- rbernoulli(1,psi)
+            abundance[i] <- rpois(1, lambda)
+
+            # alternatively p_call[i] <- rbeta(1, alpha, beta)
+
+            p_at_least_1_singer[i] <- (1 - (1 - p_call[i])**abundance[i])
+            num_positives[i] <- rbinom(1, NFILES, p_at_least_1_singer[i])
+            num_negatives[i] <- NFILES - num_positives[i]
+            theta[i] <- num_positives[i] / NFILES
+            scores[i, ] <- c(rnorm(num_positives[i], positive_mu, positive_sd), rnorm(num_negatives[i], negative_mu, negative_sd))
+        }
+
+        filename <- sprintf("%ssimulated_scores_lambda_%g_pcall_%g.csv", save_dir, lambda, p_call)
+        write.csv(scores, file = filename)
+
+        # write the rdata file with all the variables
+
+        # save the data
+        rdata_fname <- sprintf("%ssimulated_scores_lambda_%g_pcall_%g.Rdata", save_dir, lambda, p_call)
+        save(list = c("NSITES", "NFILES", "p_call", "positive_mu", "positive_sd", "negative_mu", "negative_sd", "lambda", "annotation_all", "scores"), file = rdata_fname)
+    }
+}
+```
